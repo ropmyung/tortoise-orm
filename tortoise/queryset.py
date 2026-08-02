@@ -822,6 +822,31 @@ class QuerySet(AwaitableQuery[MODEL]):
             use_indexes=self._use_indexes,
         )
 
+    def contains(self, obj: MODEL) -> ContainsQuery:
+        """
+        Check if the QuerySet contains the given instance.
+
+        :param obj: The model instance to check for.
+        :return: True if the QuerySet contains the instance, False otherwise.
+        """
+
+        if not isinstance(obj, self.model):
+            raise ParamsError("The given object is not an instance of the queryset's model.")
+
+        if not obj.pk:
+            raise ParamsError("The given object does not have a primary key.")
+
+        return ContainsQuery(
+            db=self._db,
+            model=self.model,
+            q_objects=self._q_objects,
+            annotations=self._annotations,
+            custom_filters=self._custom_filters,
+            force_indexes=self._force_indexes,
+            use_indexes=self._use_indexes,
+            obj=obj,
+        )
+
     def all(self) -> QuerySet[MODEL]:
         """
         Return the whole QuerySet.
@@ -1473,6 +1498,22 @@ class ExistsQuery(AwaitableQuery):
         return bool(result)
 
 
+class ContainsQuery(ExistsQuery):
+    def __init__(
+        self,
+        obj: MODEL,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._obj = obj
+
+    def _make_query(self) -> None:
+        super()._make_query()
+        pk_field = Field(self.model._meta.db_pk_column)
+        pk_value = self.model._meta.pk.to_db_value(self._obj.pk, self._obj)
+        self.query = self.query.where(pk_field.eq(pk_value))
+
+
 class CountQuery(AwaitableQuery):
     __slots__ = (
         "_limit",
@@ -1530,8 +1571,13 @@ class CountQuery(AwaitableQuery):
         _, result = await self._db.execute_query(*self.query.get_parameterized_sql())
         if not result:
             return 0
-        count = list(dict(result[0]).values())[0] - self._offset
-        if self._limit and count > self._limit:
+        # COUNT(*) ignores LIMIT/OFFSET, so the offset is applied here. Clamp at
+        # 0: when the offset is past the total, SQL would return 0 rows, not a
+        # negative count.
+        count = max(0, list(dict(result[0]).values())[0] - self._offset)
+        # Use ``is not None`` so an explicit ``limit(0)`` clamps to 0 instead of
+        # being treated as "no limit" by a truthiness check.
+        if self._limit is not None and count > self._limit:
             return self._limit
         return count
 

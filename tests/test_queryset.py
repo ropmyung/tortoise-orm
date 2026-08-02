@@ -60,8 +60,40 @@ async def test_exists(db, intfields_data):
 
 
 @pytest.mark.asyncio
+async def test_contains(db, intfields_data):
+    obj = await IntFields.filter(intnum=10).first()
+    assert await IntFields.all().contains(obj)
+
+    assert await IntFields.filter(intnum__lt=50).contains(obj)
+
+    assert not await IntFields.filter(intnum__gt=50).contains(obj)
+
+
+@pytest.mark.asyncio
+async def test_contains_when_no_pk(db, intfields_data):
+    with pytest.raises(ParamsError, match="The given object does not have a primary key."):
+        await IntFields.all().contains(IntFields(intnum=99))
+
+
+@pytest.mark.asyncio
+async def test_contains_with_wrong_model(db, intfields_data):
+    with pytest.raises(
+        ParamsError, match="The given object is not an instance of the queryset's model."
+    ):
+        await IntFields.all().contains(Tournament(name="test"))
+
+
+@pytest.mark.asyncio
 async def test_limit_count(db, intfields_data):
     assert await IntFields.all().limit(10).count() == 10
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_count(db, intfields_data):
+    # limit(0) means zero rows, so count() must be 0 (not the total), matching
+    # the actual limited query.
+    assert await IntFields.all().limit(0).count() == 0
+    assert await IntFields.all().limit(0).count() == len(await IntFields.all().limit(0))
 
 
 @pytest.mark.asyncio
@@ -80,6 +112,14 @@ async def test_limit_zero(db, intfields_data):
 @pytest.mark.asyncio
 async def test_offset_count(db, intfields_data):
     assert await IntFields.all().offset(10).count() == 20
+
+
+@pytest.mark.asyncio
+async def test_offset_count_beyond_total(db, intfields_data):
+    # An offset past the total must report 0, not a negative count (the SQL
+    # LIMIT/OFFSET would return zero rows).
+    assert await IntFields.all().offset(100).count() == 0
+    assert await IntFields.all().offset(100).count() == len(await IntFields.all().offset(100))
 
 
 @pytest.mark.asyncio
